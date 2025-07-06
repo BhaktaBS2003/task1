@@ -7,7 +7,7 @@ resource "random_id" "id" {
 }
 
 resource "aws_s3_bucket" "artifact_bucket" {
-  bucket = "codepipeline-artifact-${random_id.id.hex}"
+  bucket        = "codepipeline-artifact-${random_id.id.hex}"
   force_destroy = true
 }
 
@@ -17,12 +17,13 @@ resource "aws_iam_role" "codepipeline_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = { Service = "codepipeline.amazonaws.com" }
     }]
   })
 }
+
 resource "aws_iam_role_policy_attachment" "codepipeline_policy_attach" {
   role       = aws_iam_role.codepipeline_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -33,12 +34,13 @@ resource "aws_iam_role" "codebuild_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = { Service = "codebuild.amazonaws.com" }
     }]
   })
 }
+
 resource "aws_iam_role_policy_attachment" "codebuild_policy_attach" {
   role       = aws_iam_role.codebuild_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -49,12 +51,13 @@ resource "aws_iam_role" "codedeploy_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = { Service = "codedeploy.amazonaws.com" }
     }]
   })
 }
+
 resource "aws_iam_role_policy_attachment" "codedeploy_policy_attach" {
   role       = aws_iam_role.codedeploy_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -65,30 +68,40 @@ resource "aws_iam_role" "ec2_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
 }
+
 resource "aws_iam_role_policy_attachment" "ec2_policy_attach" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
 }
+
 resource "aws_iam_instance_profile" "ec2_instance_profile" {
   name = "codedeploy-ec2-profile"
   role = aws_iam_role.ec2_role.name
 }
 
-# === LAUNCH TEMPLATE + ASG ===
+# === LAUNCH TEMPLATE WITH PUBLIC IP ===
 resource "aws_launch_template" "lt" {
   name_prefix   = "codedeploy-lt-"
-  image_id      = "ami-0f58b397bc5c1f2e8" # Amazon Linux 2 in ap-south-1
+  image_id      = "ami-0f58b397bc5c1f2e8"
   instance_type = "t2.micro"
 
-  key_name = "tf-test" # <<< Change this
+  key_name = "tf-test"
+
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_instance_profile.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+    subnet_id                   = "subnet-0bb8f87334a2d6bcc"
   }
 
   tag_specifications {
@@ -116,7 +129,7 @@ resource "aws_autoscaling_group" "asg" {
   desired_capacity     = 1
   max_size             = 1
   min_size             = 1
-  vpc_zone_identifier  = ["subnet-0bb8f87334a2d6bcc", "subnet-0343a7202643235b2"] # <<< Replace with your subnet IDs
+  vpc_zone_identifier  = ["subnet-0bb8f87334a2d6bcc", "subnet-0343a7202643235b2"]
 
   launch_template {
     id      = aws_launch_template.lt.id
@@ -134,7 +147,6 @@ resource "aws_autoscaling_group" "asg" {
   }
 }
 
-# === CODEBUILD ===
 resource "aws_codebuild_project" "build_project" {
   name         = "my-codebuild-project"
   service_role = aws_iam_role.codebuild_role.arn
@@ -156,7 +168,6 @@ resource "aws_codebuild_project" "build_project" {
   }
 }
 
-# === CODEDEPLOY ===
 resource "aws_codedeploy_app" "codedeploy_app" {
   name             = "codedeploy-app"
   compute_platform = "Server"
@@ -175,7 +186,6 @@ resource "aws_codedeploy_deployment_group" "deployment_group" {
   autoscaling_groups = [aws_autoscaling_group.asg.name]
 }
 
-# === CODEPIPELINE ===
 resource "aws_codepipeline" "pipeline" {
   name     = "my-demo-pipeline"
   role_arn = aws_iam_role.codepipeline_role.arn
