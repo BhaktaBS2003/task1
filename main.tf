@@ -1,4 +1,3 @@
-
 provider "aws" {
   region = "ap-south-1"
 }
@@ -12,6 +11,7 @@ resource "aws_s3_bucket" "artifact_bucket" {
   force_destroy = true
 }
 
+# === ROLES ===
 resource "aws_iam_role" "codepipeline_role" {
   name = "codepipeline-role"
   assume_role_policy = jsonencode({
@@ -19,13 +19,10 @@ resource "aws_iam_role" "codepipeline_role" {
     Statement = [{
       Action = "sts:AssumeRole",
       Effect = "Allow",
-      Principal = {
-        Service = "codepipeline.amazonaws.com"
-      }
+      Principal = { Service = "codepipeline.amazonaws.com" }
     }]
   })
 }
-
 resource "aws_iam_role_policy_attachment" "codepipeline_policy_attach" {
   role       = aws_iam_role.codepipeline_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -38,13 +35,10 @@ resource "aws_iam_role" "codebuild_role" {
     Statement = [{
       Action = "sts:AssumeRole",
       Effect = "Allow",
-      Principal = {
-        Service = "codebuild.amazonaws.com"
-      }
+      Principal = { Service = "codebuild.amazonaws.com" }
     }]
   })
 }
-
 resource "aws_iam_role_policy_attachment" "codebuild_policy_attach" {
   role       = aws_iam_role.codebuild_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -57,18 +51,90 @@ resource "aws_iam_role" "codedeploy_role" {
     Statement = [{
       Action = "sts:AssumeRole",
       Effect = "Allow",
-      Principal = {
-        Service = "codedeploy.amazonaws.com"
-      }
+      Principal = { Service = "codedeploy.amazonaws.com" }
     }]
   })
 }
-
 resource "aws_iam_role_policy_attachment" "codedeploy_policy_attach" {
   role       = aws_iam_role.codedeploy_role.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
+resource "aws_iam_role" "ec2_role" {
+  name = "codedeploy-ec2-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "ec2_policy_attach" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+}
+resource "aws_iam_instance_profile" "ec2_instance_profile" {
+  name = "codedeploy-ec2-profile"
+  role = aws_iam_role.ec2_role.name
+}
+
+# === LAUNCH TEMPLATE + ASG ===
+resource "aws_launch_template" "lt" {
+  name_prefix   = "codedeploy-lt-"
+  image_id      = "ami-0f58b397bc5c1f2e8" # Amazon Linux 2 in ap-south-1
+  instance_type = "t2.micro"
+
+  key_name = "tf-test" # <<< Change this
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_instance_profile.name
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "codedeploy-asg-instance"
+    }
+  }
+
+  user_data = base64encode(<<EOF
+#!/bin/bash
+yum update -y
+yum install ruby wget -y
+cd /home/ec2-user
+wget https://aws-codedeploy-ap-south-1.s3.ap-south-1.amazonaws.com/latest/install
+chmod +x ./install
+./install auto
+systemctl start codedeploy-agent
+EOF
+  )
+}
+
+resource "aws_autoscaling_group" "asg" {
+  name                 = "codedeploy-asg"
+  desired_capacity     = 1
+  max_size             = 1
+  min_size             = 1
+  vpc_zone_identifier  = ["subnet-0bb8f87334a2d6bcc", "subnet-0343a7202643235b2"] # <<< Replace with your subnet IDs
+
+  launch_template {
+    id      = aws_launch_template.lt.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "codedeploy-asg-instance"
+    propagate_at_launch = true
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# === CODEBUILD ===
 resource "aws_codebuild_project" "build_project" {
   name         = "my-codebuild-project"
   service_role = aws_iam_role.codebuild_role.arn
@@ -90,6 +156,7 @@ resource "aws_codebuild_project" "build_project" {
   }
 }
 
+# === CODEDEPLOY ===
 resource "aws_codedeploy_app" "codedeploy_app" {
   name             = "codedeploy-app"
   compute_platform = "Server"
@@ -105,15 +172,10 @@ resource "aws_codedeploy_deployment_group" "deployment_group" {
     deployment_option = "WITHOUT_TRAFFIC_CONTROL"
   }
 
-  ec2_tag_set {
-    ec2_tag_filter {
-      key   = "Name"
-      type  = "KEY_AND_VALUE"
-      value = "CodeDeployInstance"
-    }
-  }
+  auto_scaling_groups = [aws_autoscaling_group.asg.name]
 }
 
+# === CODEPIPELINE ===
 resource "aws_codepipeline" "pipeline" {
   name     = "my-demo-pipeline"
   role_arn = aws_iam_role.codepipeline_role.arn
@@ -171,7 +233,7 @@ resource "aws_codepipeline" "pipeline" {
 
       configuration = {
         ApplicationName     = aws_codedeploy_app.codedeploy_app.name
-        DeploymentGroupName = aws_codedeploy_deployment_group.deployment_group.deployment_group_name
+        DeploymentGroupName = aws_codedeploy_deployment_group.deployment_group_name
       }
     }
   }
