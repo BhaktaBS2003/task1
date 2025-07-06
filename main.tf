@@ -172,7 +172,7 @@ resource "aws_codedeploy_deployment_group" "deployment_group" {
     deployment_option = "WITHOUT_TRAFFIC_CONTROL"
   }
 
-  auto_scaling_groups = [aws_autoscaling_group.asg.name]
+  autoscaling_groups = [aws_autoscaling_group.asg.name]
 }
 
 # === CODEPIPELINE ===
@@ -233,7 +233,7 @@ resource "aws_codepipeline" "pipeline" {
 
       configuration = {
         ApplicationName     = aws_codedeploy_app.codedeploy_app.name
-        DeploymentGroupName = aws_codedeploy_deployment_group.deployment_group_name
+        DeploymentGroupName = aws_codedeploy_deployment_group.deployment_group.deployment_group_name
       }
     }
   }
